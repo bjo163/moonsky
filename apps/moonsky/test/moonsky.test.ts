@@ -16,6 +16,7 @@ const defaults = {
   serviceKey: '',
   telegramBotToken: '',
   telegramWebhookSecret: '',
+  whatsappAuthDir: '',
   bootstrapLogin: 'admin',
   bootstrapPassword: '',
 } as const
@@ -55,6 +56,15 @@ void test('MOONSKY validates service, webhook, bootstrap and production configur
   }))
 })
 
+void test('MOONSKY parses the WhatsApp session directory and defaults it absent', () => {
+  assert.equal(parseConfig({}).whatsappAuthDir, '')
+  assert.equal(parseConfig({ MOONSKY_WHATSAPP_AUTH_DIR: 'whatsapp-session' }).whatsappAuthDir, 'whatsapp-session')
+  assert.equal(parseConfig({ MOONSKY_WHATSAPP_AUTH_DIR: '  /var/lib/moonsky/wa  ' }).whatsappAuthDir, '/var/lib/moonsky/wa')
+  // WhatsApp is a single explicit path; enabling it without Telegram or a store is a
+  // runtime concern (the composition root refuses it), never a configuration-time throw.
+  assert.doesNotThrow(() => parseConfig({ MOONSKY_WHATSAPP_AUTH_DIR: 'whatsapp-session' }))
+})
+
 void test('health endpoint identifies MOONSKY without implying configured providers', async () => {
   const app = createMoonskyServer(parseConfig({}))
   try {
@@ -73,12 +83,13 @@ void test('health endpoint identifies MOONSKY without implying configured provid
   }
 })
 
-void test('MOONSKY declares its API, store, Telegram and local UI dependencies', () => {
+void test('MOONSKY declares its API, store, transport and local UI dependencies', () => {
   assert.deepEqual(Object.keys(manifest.dependencies).sort(), [
     '@fastify/websocket',
     '@moonsky/core',
     '@moonsky/store',
     '@moonsky/telegram',
+    '@moonsky/whatsapp',
     '@radix-ui/react-dialog',
     '@radix-ui/react-slot',
     'class-variance-authority',

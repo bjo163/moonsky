@@ -4,7 +4,9 @@ import { createMoonskyServer } from './server.js'
 import { countOperators, createChannelAccount, createMoonskyStore, createOperator, deleteExpiredOperatorSessions, findChannelAccount, migrateMoonskyStore } from '@moonsky/store'
 import type { MoonskyStore } from '@moonsky/store'
 import { TelegramAdapter } from '@moonsky/telegram'
-import { createTelegramMoonskyChannel, MoonskyChannelRegistry } from './channels.js'
+import { WhatsAppClient } from '@moonsky/whatsapp'
+import { createTelegramMoonskyChannel, createWhatsAppInboundHandler, createWhatsAppMoonskyChannel, MoonskyChannelRegistry } from './channels.js'
+import { MoonskyEventBus } from './ws.js'
 import { hashPassword } from './session.js'
 
 const DEVELOPMENT_BOOTSTRAP_PASSWORD = 'moonsky-dev-admin-1234'
@@ -50,6 +52,9 @@ async function main(): Promise<void> {
     if (config.telegramBotToken && !store) {
       throw new Error('The MOONSKY store is required when the Telegram provider is configured.')
     }
+    if (config.whatsappAuthDir && !store) {
+      throw new Error('The MOONSKY store is required when the WhatsApp provider is configured.')
+    }
     const telegram = store && config.telegramBotToken && config.telegramWebhookSecret
       ? new TelegramAdapter({
         botToken: config.telegramBotToken,
@@ -59,6 +64,7 @@ async function main(): Promise<void> {
         store: store.db,
       })
       : undefined
+    const events = new MoonskyEventBus()
     const channels = new MoonskyChannelRegistry()
     if (store && telegram) {
       const externalAccountId = 'default'
@@ -71,8 +77,28 @@ async function main(): Promise<void> {
         })
       channels.register(createTelegramMoonskyChannel(telegram, account.id))
     }
-    const app = createMoonskyServer(config, { store: store?.db, channels, telegram })
+    let whatsapp: WhatsAppClient | undefined
+    if (store && config.whatsappAuthDir) {
+      const externalAccountId = 'default'
+      const account = await findChannelAccount(store.db, 'whatsapp', externalAccountId)
+        ?? await createChannelAccount(store.db, {
+          provider: 'whatsapp',
+          externalAccountId,
+          authRef: 'secret://filesystem/MOONSKY_WHATSAPP_AUTH_DIR',
+          status: 'disconnected',
+        })
+      whatsapp = new WhatsAppClient({
+        authDir: config.whatsappAuthDir,
+        messageHandler: createWhatsAppInboundHandler(store.db, account.id, (info) => {
+          events.publish({ type: 'message.inbound', messageId: info.messageId, provider: 'whatsapp', timestamp: new Date().toISOString() })
+          events.publish({ type: 'conversation.updated', conversationId: info.conversationId, timestamp: new Date().toISOString() })
+        }),
+      })
+      channels.register(createWhatsAppMoonskyChannel(whatsapp, account.id))
+    }
+    const app = createMoonskyServer(config, { store: store?.db, channels, telegram, events })
     if (store) app.addHook('onClose', async () => store.client.end({ timeout: 5 }))
+    if (whatsapp) app.addHook('onClose', () => whatsapp?.close())
     await app.listen({ host: config.host, port: config.port })
     console.info(`MOONSKY service listening on http://${config.host}:${config.port}${store ? '' : ' (health-only mode)'}`)
 

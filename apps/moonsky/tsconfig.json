@@ -9,6 +9,7 @@
   "references": [
     { "path": "../../packages/core" },
     { "path": "../../packages/store" },
-    { "path": "../../packages/telegram" }
+    { "path": "../../packages/telegram" },
+    { "path": "../../packages/whatsapp" }
   ]
 }

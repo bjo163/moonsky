@@ -17,6 +17,7 @@
     "@moonsky/core": "workspace:*",
     "@moonsky/store": "workspace:*",
     "@moonsky/telegram": "workspace:*",
+    "@moonsky/whatsapp": "workspace:*",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-slot": "^1.2.3",
     "class-variance-authority": "^0.7.1",

@@ -14,6 +14,9 @@ boundaries, renamed packages, no ARSY dependency and no shared UI package.
   attempts, all inside the `moonsky` PostgreSQL schema.
 - Telegram transport: webhook ingestion with secret-token verification and
   outbound send through grammY.
+- WhatsApp transport: Baileys session pairing driven by the control plane (start
+  logs the operator in via QR), inbound traffic persisted into the same store,
+  and outbound send. Absent unless `MOONSKY_WHATSAPP_AUTH_DIR` is configured.
 - Operator REST API and WebSocket event stream for an inbox UI.
 - Local operator identity: scrypt password hashes, SHA-256 session digests,
   12-hour sessions, login throttling, bootstrap administrator.
@@ -57,6 +60,19 @@ DATABASE_URL=postgresql://moonsky:moonsky@127.0.0.1:5433/moonsky pnpm dev
 the API on port 3005. Without `DATABASE_URL` the service starts in health-only
 mode and reports authentication as unavailable.
 
+### Enabling channels
+
+Providers register themselves into the control plane only when configured, and all
+of them require `DATABASE_URL` (D18 persistence is mandatory for a real provider).
+
+- **Telegram:** set `MOONSKY_TELEGRAM_BOT_TOKEN` and `MOONSKY_TELEGRAM_WEBHOOK_SECRET`.
+- **WhatsApp:** set `MOONSKY_WHATSAPP_AUTH_DIR` to a private session directory
+  (for example `whatsapp-session`, which is gitignored). This enables the channel;
+  an administrator then pairs it through the control plane (`POST /api/v1/channels/whatsapp/start`),
+  and the QR reaches their authenticated WebSocket. The session directory must live on
+  a private mount — the zero-config Compose stack intentionally stores no provider
+  session in a shared volume.
+
 ## Commands
 
 | Command | Purpose |
@@ -81,7 +97,7 @@ they skip (and say so) otherwise.
 | `packages/store` | `@moonsky/store` | D18 schema, migrations, repositories, operator sessions |
 | `packages/telegram` | `@moonsky/telegram` | Telegram transport adapter |
 | `packages/core` | `@moonsky/core` | Shared transport contracts and secret checks |
-| `packages/whatsapp` | `@moonsky/whatsapp` | WhatsApp transport adapter (not wired by default) |
+| `packages/whatsapp` | `@moonsky/whatsapp` | WhatsApp transport adapter (enabled by `MOONSKY_WHATSAPP_AUTH_DIR`) |
 
 ## Documentation
 

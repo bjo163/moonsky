@@ -8,6 +8,7 @@ const ConfigSchema = z.object({
   MOONSKY_SERVICE_KEY: z.string().max(256).default(''),
   MOONSKY_TELEGRAM_BOT_TOKEN: z.string().default(''),
   MOONSKY_TELEGRAM_WEBHOOK_SECRET: z.string().default(''),
+  MOONSKY_WHATSAPP_AUTH_DIR: z.string().trim().default(''),
   MOONSKY_BOOTSTRAP_LOGIN: z.string().trim().min(1).max(64).default('admin'),
   MOONSKY_BOOTSTRAP_PASSWORD: z.string().max(256).default(''),
 })
@@ -20,6 +21,7 @@ export interface MoonskyConfig {
   serviceKey: string
   telegramBotToken: string
   telegramWebhookSecret: string
+  whatsappAuthDir: string
   bootstrapLogin: string
   bootstrapPassword: string
 }
@@ -58,6 +60,7 @@ export function parseConfig(
     MOONSKY_SERVICE_KEY: environment.MOONSKY_SERVICE_KEY,
     MOONSKY_TELEGRAM_BOT_TOKEN: environment.MOONSKY_TELEGRAM_BOT_TOKEN,
     MOONSKY_TELEGRAM_WEBHOOK_SECRET: environment.MOONSKY_TELEGRAM_WEBHOOK_SECRET,
+    MOONSKY_WHATSAPP_AUTH_DIR: environment.MOONSKY_WHATSAPP_AUTH_DIR,
     MOONSKY_BOOTSTRAP_LOGIN: environment.MOONSKY_BOOTSTRAP_LOGIN,
     MOONSKY_BOOTSTRAP_PASSWORD: environment.MOONSKY_BOOTSTRAP_PASSWORD,
   })
@@ -92,6 +95,7 @@ export function parseConfig(
     serviceKey: parsed.data.MOONSKY_SERVICE_KEY,
     telegramBotToken: parsed.data.MOONSKY_TELEGRAM_BOT_TOKEN,
     telegramWebhookSecret: parsed.data.MOONSKY_TELEGRAM_WEBHOOK_SECRET,
+    whatsappAuthDir: parsed.data.MOONSKY_WHATSAPP_AUTH_DIR,
     bootstrapLogin: parsed.data.MOONSKY_BOOTSTRAP_LOGIN,
     bootstrapPassword: parsed.data.MOONSKY_BOOTSTRAP_PASSWORD,
   }

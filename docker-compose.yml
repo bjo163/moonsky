@@ -27,6 +27,9 @@ services:
       MOONSKY_SERVICE_KEY: ${MOONSKY_SERVICE_KEY:-}
       MOONSKY_TELEGRAM_BOT_TOKEN: ${MOONSKY_TELEGRAM_BOT_TOKEN:-}
       MOONSKY_TELEGRAM_WEBHOOK_SECRET: ${MOONSKY_TELEGRAM_WEBHOOK_SECRET:-}
+      # Empty disables the WhatsApp channel. When set, point it at a path on a private
+      # operator-provided mount; the zero-config stack stores no provider session here.
+      MOONSKY_WHATSAPP_AUTH_DIR: ${MOONSKY_WHATSAPP_AUTH_DIR:-}
       MOONSKY_BOOTSTRAP_LOGIN: ${MOONSKY_BOOTSTRAP_LOGIN:-admin}
       MOONSKY_BOOTSTRAP_PASSWORD: ${MOONSKY_BOOTSTRAP_PASSWORD:-moonsky-local-admin}
     ports:

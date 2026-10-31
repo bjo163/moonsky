@@ -13,8 +13,15 @@ import {
   recordDeliveryAttempt,
 } from '@moonsky/store'
 import { TelegramAdapter } from '@moonsky/telegram'
-import type { MoonskyChannel } from '../src/channels.js'
-import { createTelegramMoonskyChannel, DuplicateMoonskyChannelIdError, MoonskyChannelRegistry } from '../src/channels.js'
+import type { ConnectionState, WhatsAppStatus } from '@moonsky/whatsapp'
+import type { MoonskyChannel, WhatsAppChannelClient } from '../src/channels.js'
+import {
+  createTelegramMoonskyChannel,
+  createWhatsAppInboundHandler,
+  createWhatsAppMoonskyChannel,
+  DuplicateMoonskyChannelIdError,
+  MoonskyChannelRegistry,
+} from '../src/channels.js'
 import type { MoonskyConfig } from '../src/config.js'
 import { hashPassword, hashToken, newSessionToken } from '../src/session.js'
 import { createMoonskyServer } from '../src/server.js'
@@ -35,6 +42,7 @@ function testConfig(overrides: Partial<MoonskyConfig> = {}): MoonskyConfig {
     serviceKey: SERVICE_KEY,
     telegramBotToken: '',
     telegramWebhookSecret: '',
+    whatsappAuthDir: '',
     bootstrapLogin: 'admin',
     bootstrapPassword: '',
     ...overrides,
@@ -70,6 +78,142 @@ class TestChannel extends EventEmitter implements MoonskyChannel {
     this.state = 'logged-out'
   }
 }
+
+/** A no-network stand-in for the Baileys-backed transport, exercised via the real adapter. */
+class FakeWhatsAppClient extends EventEmitter implements WhatsAppChannelClient {
+  state: ConnectionState = 'disconnected'
+  connectCalls = 0
+  logoutCalls = 0
+  sendBehavior: 'ok' | 'throw' = 'ok'
+
+  get status(): WhatsAppStatus {
+    return { state: this.state }
+  }
+
+  async connect(): Promise<void> {
+    this.connectCalls += 1
+    this.state = 'connecting'
+  }
+
+  async logout(): Promise<void> {
+    this.logoutCalls += 1
+    this.state = 'logged-out'
+  }
+
+  async sendText(): Promise<string> {
+    if (this.sendBehavior === 'throw') throw new Error('synthetic provider failure that must not leak')
+    return 'synthetic-provider-message-id'
+  }
+}
+
+void test('MOONSKY maps WhatsApp transport states onto the provider vocabulary', () => {
+  const client = new FakeWhatsAppClient()
+  const channel = createWhatsAppMoonskyChannel(client, 'synthetic-whatsapp-account')
+  assert.equal(channel.id, 'whatsapp')
+  assert.equal(channel.label, 'WhatsApp')
+  assert.equal(channel.channelAccountId, 'synthetic-whatsapp-account')
+  for (const [state, expected] of [
+    ['open', 'connected'],
+    ['connecting', 'pairing'],
+    ['logged-out', 'disconnected'],
+    ['disconnected', 'disconnected'],
+  ] as const) {
+    client.state = state
+    assert.deepEqual(channel.status(), { state: expected })
+  }
+})
+
+void test('MOONSKY maps WhatsApp send to accepted or a leak-free failure', async () => {
+  const client = new FakeWhatsAppClient()
+  const channel = createWhatsAppMoonskyChannel(client, 'synthetic-whatsapp-account')
+  assert.deepEqual(await channel.send({ to: '15551234567', text: 'synthetic send' }), {
+    status: 'accepted', providerMessageId: 'synthetic-provider-message-id',
+  })
+  client.sendBehavior = 'throw'
+  const failed = await channel.send({ to: '15551234567', text: 'synthetic send' })
+  assert.equal(failed.status, 'failed')
+  assert.equal(failed.error, undefined)
+  assert.equal(JSON.stringify(failed).includes('must not leak'), false, 'provider failure text is never surfaced')
+})
+
+void test('MOONSKY drives WhatsApp start and logout through the transport', async () => {
+  const client = new FakeWhatsAppClient()
+  const channel = createWhatsAppMoonskyChannel(client, 'synthetic-whatsapp-account')
+  await channel.start?.()
+  assert.equal(client.connectCalls, 1)
+  assert.deepEqual(channel.status(), { state: 'pairing' })
+  await channel.logout?.()
+  assert.equal(client.logoutCalls, 1)
+  assert.deepEqual(channel.status(), { state: 'disconnected' })
+})
+
+void test('MOONSKY forwards WhatsApp QR events from the transport and detaches on off', () => {
+  const client = new FakeWhatsAppClient()
+  const channel = createWhatsAppMoonskyChannel(client, 'synthetic-whatsapp-account')
+  const received: string[] = []
+  const listener = (qr: string) => { received.push(qr) }
+  channel.on?.('qr', listener)
+  client.emit('qr', 'synthetic-qr-one')
+  channel.off?.('qr', listener)
+  client.emit('qr', 'synthetic-qr-two')
+  assert.deepEqual(received, ['synthetic-qr-one'])
+})
+
+void test('MOONSKY refuses a second WhatsApp channel under the same id', () => {
+  const registry = new MoonskyChannelRegistry()
+  registry.register(createWhatsAppMoonskyChannel(new FakeWhatsAppClient(), 'account-a'))
+  assert.throws(
+    () => registry.register(createWhatsAppMoonskyChannel(new FakeWhatsAppClient(), 'account-b')),
+    DuplicateMoonskyChannelIdError,
+  )
+})
+
+void test('MOONSKY keeps a configured WhatsApp channel controllable and its QR out of info logs', async (t) => {
+  const client = new FakeWhatsAppClient()
+  const channels = new MoonskyChannelRegistry()
+  channels.register(createWhatsAppMoonskyChannel(client, 'synthetic-whatsapp-account'))
+  const events = new MoonskyEventBus()
+  const logged: string[] = []
+  const app = createMoonskyServer(testConfig(), {
+    channels,
+    events,
+    logger: { level: 'info', stream: { write: (line: string) => { logged.push(line) } } as never },
+  })
+  t.after(async () => app.close())
+
+  const qrFrames: Array<{ type: string; channelId?: string; qr?: string }> = []
+  const onEvent = (event: { type: string }) => {
+    if (event.type === 'channel.qr') qrFrames.push(event as { type: string; channelId?: string; qr?: string })
+  }
+  events.on('event', onEvent)
+  t.after(() => events.off('event', onEvent))
+
+  const serviceStart = await app.inject().post('/api/v1/channels/whatsapp/start').headers({ 'x-moonsky-key': SERVICE_KEY })
+  assert.equal(serviceStart.statusCode, 403, 'the service credential cannot pair a provider')
+  const serviceLogout = await app.inject().post('/api/v1/channels/whatsapp/logout').headers({ 'x-moonsky-key': SERVICE_KEY })
+  assert.equal(serviceLogout.statusCode, 403, 'the service credential cannot log a provider out')
+  const anonymous = await app.inject().post('/api/v1/channels/whatsapp/start')
+  assert.equal(anonymous.statusCode, 401, 'control is not anonymous')
+  const bearerWithoutStore = await app.inject().post('/api/v1/channels/whatsapp/start').headers({ authorization: `Bearer ${newSessionToken()}` })
+  assert.equal(bearerWithoutStore.statusCode, 503, 'an operator session cannot be resolved without the store')
+  assert.equal(client.connectCalls, 0, 'refused control never touches the transport')
+
+  client.emit('qr', 'synthetic-whatsapp-qr')
+  assert.equal(qrFrames.length, 1, 'the wiring in createMoonskyServer forwards the channel QR to the event bus')
+  assert.equal(qrFrames[0]?.type, 'channel.qr')
+  assert.equal(qrFrames[0]?.channelId, 'whatsapp')
+  assert.equal(qrFrames[0]?.qr, 'synthetic-whatsapp-qr')
+
+  const register = await app.inject().post('/api/v1/channels/register').headers({ 'x-moonsky-key': SERVICE_KEY })
+  assert.equal(register.statusCode, 200)
+  const projected = register.json().data.find((entry: { id: string }) => entry.id === 'whatsapp') as { label: string; state: string }
+  assert.equal(projected.label, 'WhatsApp')
+  assert.equal(projected.state, 'disconnected', 'an unstarted WhatsApp channel reports its mapped state')
+  assert.equal(register.body.includes('synthetic-whatsapp-qr'), false, 'the registry projection never carries the QR payload')
+
+  const output = logged.join('')
+  assert.equal(output.includes('synthetic-whatsapp-qr'), false, 'QR payloads never reach info logs')
+})
 
 void test('MOONSKY channel registry fails on duplicate ids with a named error', () => {
   const registry = new MoonskyChannelRegistry()
@@ -317,6 +461,10 @@ void test('MOONSKY standalone operator sessions, service scope and D18 control p
 
   const serviceChannels = await app.inject().get('/api/v1/channels').headers({ 'x-moonsky-key': SERVICE_KEY })
   assert.equal(serviceChannels.statusCode, 403, 'service credentials are scoped to machine send and registration')
+  const serviceChannelStart = await app.inject().post('/api/v1/channels/fixture/start').headers({ 'x-moonsky-key': SERVICE_KEY })
+  assert.equal(serviceChannelStart.statusCode, 403, 'the service credential cannot start a provider channel')
+  const serviceChannelLogout = await app.inject().post('/api/v1/channels/fixture/logout').headers({ 'x-moonsky-key': SERVICE_KEY })
+  assert.equal(serviceChannelLogout.statusCode, 403, 'the service credential cannot log a provider channel out')
   const serviceRegister = await app.inject().post('/api/v1/channels/register').headers({ 'x-moonsky-key': SERVICE_KEY })
   assert.equal(serviceRegister.statusCode, 200)
   assert.equal(serviceRegister.json().data.length, 2)
@@ -393,6 +541,8 @@ void test('MOONSKY standalone operator sessions, service scope and D18 control p
     app.inject().post('/api/v1/broadcast').headers(viewerHeaders).payload({ to: 'chat-fixture', text: 'denied' }),
     app.inject().post('/api/v1/channels/telegram/start').headers(viewerHeaders),
     app.inject().post('/api/v1/channels/telegram/logout').headers(viewerHeaders),
+    app.inject().post('/api/v1/channels/fixture/start').headers(viewerHeaders),
+    app.inject().post('/api/v1/channels/fixture/logout').headers(viewerHeaders),
     app.inject().post('/api/v1/channels/register').headers(viewerHeaders),
   ]
   for (const request of viewerWrites) assert.equal((await request).statusCode, 403, 'viewers cannot change provider state')
@@ -528,6 +678,60 @@ void test('MOONSKY standalone operator sessions, service scope and D18 control p
   ]) {
     assert.equal(output.includes(secret), false, `info logs must not contain ${secret}`)
   }
+})
+
+void test('MOONSKY persists inbound WhatsApp traffic into D18 and dedupes by external id', {
+  timeout: 60_000,
+  skip: databaseUrl ? false : 'DATABASE_URL is not set, so the WhatsApp inbound evidence cannot run',
+}, async (t) => {
+  assert.ok(databaseUrl)
+  const database = new URL(databaseUrl)
+  assert.ok(['localhost', '127.0.0.1', '::1'].includes(database.hostname), 'database test is local-only')
+
+  const store = createMoonskyStore(databaseUrl)
+  await migrateMoonskyStore(store)
+  const suffix = `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+  const account = await createChannelAccount(store.db, {
+    provider: 'whatsapp',
+    externalAccountId: `whatsapp-inbound-${suffix}`,
+    authRef: 'secret://test/whatsapp-session',
+    status: 'connected',
+  })
+  t.after(async () => {
+    await store.client`DELETE FROM moonsky.channel_accounts WHERE id = ${account.id}`
+    await store.client.end({ timeout: 5 })
+  })
+
+  const persisted: Array<{ messageId: string; conversationId: string }> = []
+  const handler = createWhatsAppInboundHandler(store.db, account.id, (info) => { persisted.push(info) })
+  const sender = { sendText: async () => 'unused-synthetic-reply' }
+  const inbound = {
+    id: 'synthetic-wa-1',
+    remoteJid: '15550001111@s.whatsapp.net',
+    fromMe: false,
+    text: 'synthetic inbound whatsapp body',
+    timestampMs: Date.now(),
+  }
+
+  await handler(inbound, sender)
+  const conversation = await findConversation(store.db, account.id, inbound.remoteJid)
+  assert.ok(conversation, 'the inbound chat is materialized as a conversation keyed by the jid')
+  const messages = await listMessages(store.db, conversation.id)
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0]?.body, inbound.text)
+  assert.equal(messages[0]?.direction, 'inbound')
+  assert.equal(messages[0]?.externalMessageId, inbound.id)
+  assert.equal(messages[0]?.status, 'received')
+  assert.equal(persisted.length, 1)
+
+  await handler(inbound, sender)
+  const afterReplay = await listMessages(store.db, conversation.id)
+  assert.equal(afterReplay.length, 1, 'a redelivered external id is deduped, not double-stored')
+  assert.equal(persisted.length, 1, 'a deduped message never re-publishes')
+
+  await handler({ ...inbound, id: 'synthetic-wa-2', text: '   ' }, sender)
+  const afterBlank = await listMessages(store.db, conversation.id)
+  assert.equal(afterBlank.length, 1, 'empty text is never persisted')
 })
 
 function waitForOpen(socket: WebSocket): Promise<void> {

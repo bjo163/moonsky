@@ -14,5 +14,8 @@ FROM node:24-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app /app
+# Default location for MOONSKY_WHATSAPP_AUTH_DIR when an operator enables WhatsApp.
+# Empty by default; mount a private volume here to persist the session across restarts.
+RUN mkdir -p /app/whatsapp-session
 EXPOSE 3005
 CMD ["node", "apps/moonsky/dist/index.js"]
