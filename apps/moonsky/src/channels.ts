@@ -86,13 +86,17 @@ export interface WhatsAppChannelClient {
   off(event: 'qr', listener: (qr: string) => void): unknown
 }
 
-/** Map the transport's connection states onto the D18/UI provider vocabulary. */
+/**
+ * Map the transport's connection states onto the D18/UI provider vocabulary. `connecting`
+ * covers the whole opening handshake: a pairing payload is only available once the transport
+ * emits `qr`, so the state alone must not claim that the channel is pairing.
+ */
 function mapWhatsAppState(state: ConnectionState): string {
   switch (state) {
     case 'open':
       return 'connected'
     case 'connecting':
-      return 'pairing'
+      return 'connecting'
     default:
       return 'disconnected'
   }

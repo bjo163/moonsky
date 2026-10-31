@@ -114,7 +114,7 @@ void test('MOONSKY maps WhatsApp transport states onto the provider vocabulary',
   assert.equal(channel.channelAccountId, 'synthetic-whatsapp-account')
   for (const [state, expected] of [
     ['open', 'connected'],
-    ['connecting', 'pairing'],
+    ['connecting', 'connecting'],
     ['logged-out', 'disconnected'],
     ['disconnected', 'disconnected'],
   ] as const) {
@@ -141,7 +141,7 @@ void test('MOONSKY drives WhatsApp start and logout through the transport', asyn
   const channel = createWhatsAppMoonskyChannel(client, 'synthetic-whatsapp-account')
   await channel.start?.()
   assert.equal(client.connectCalls, 1)
-  assert.deepEqual(channel.status(), { state: 'pairing' })
+  assert.deepEqual(channel.status(), { state: 'connecting' })
   await channel.logout?.()
   assert.equal(client.logoutCalls, 1)
   assert.deepEqual(channel.status(), { state: 'disconnected' })
