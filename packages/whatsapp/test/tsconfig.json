@@ -1,0 +1,16 @@
+{
+  // Test-only project for packages/whatsapp: noEmit, visible to ESLint
+  // projectService without emitting into the production dist/.
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "types": ["node"],
+    "lib": ["ES2022"]
+  },
+  "include": ["./**/*.ts"],
+  "references": [{ "path": "../tsconfig.json" }]
+}

@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: moonsky
+      POSTGRES_PASSWORD: moonsky
+      POSTGRES_DB: moonsky
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - moonsky-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moonsky -d moonsky"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3005
+      DATABASE_URL: postgresql://moonsky:moonsky@db:5432/moonsky
+      MOONSKY_SERVICE_KEY: ${MOONSKY_SERVICE_KEY:-}
+      MOONSKY_TELEGRAM_BOT_TOKEN: ${MOONSKY_TELEGRAM_BOT_TOKEN:-}
+      MOONSKY_TELEGRAM_WEBHOOK_SECRET: ${MOONSKY_TELEGRAM_WEBHOOK_SECRET:-}
+      MOONSKY_BOOTSTRAP_LOGIN: ${MOONSKY_BOOTSTRAP_LOGIN:-admin}
+      MOONSKY_BOOTSTRAP_PASSWORD: ${MOONSKY_BOOTSTRAP_PASSWORD:-moonsky-local-admin}
+    ports:
+      - "127.0.0.1:3005:3005"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3005/health').then((response) => process.exit(response.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  moonsky-db:
